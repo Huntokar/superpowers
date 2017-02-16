@@ -26,7 +26,7 @@ export default class TreeById extends EventEmitter {
     let maxNodeId = -1;
     this.walk((node, parentNode) => {
       // NOTE: Legacy stuff from Superpowers 0.4
-      if (typeof node.id === "number") node.id = node.id.toString();
+      if (typeof node.id === "number") node.id = (node.id as number).toString();
 
       maxNodeId = Math.max(maxNodeId, parseInt(node.id, 10));
       this.byId[node.id] = node;
@@ -71,7 +71,12 @@ export default class TreeById extends EventEmitter {
     if (parentId != null) siblings = (this.byId[parentId] != null) ? this.byId[parentId].children : null;
     if (siblings == null) { callback(`Invalid parent id: ${parentId}`); return; }
 
-    const missingKeys = Object.keys(this.schema);
+    const missingKeys: string[] = [];
+    for (const key of Object.keys(this.schema)) {
+      const rule = this.schema[key];
+      if (rule.type[rule.type.length - 1] !== "?") missingKeys.push(key);
+    }
+
     for (const key in node) {
       const value = node[key];
       const rule = this.schema[key];
@@ -187,8 +192,6 @@ export default class TreeById extends EventEmitter {
     });
   }
 
-  // clear() {}
-
   setProperty(id: string, path: string, value: any, callback: (err: string, value?: any) => any) {
     let node = this.byId[id];
     if (node == null) { callback(`Invalid node id: ${id}`); return; }
@@ -198,6 +201,7 @@ export default class TreeById extends EventEmitter {
     let rule = this.schema[parts[0]];
     for (const part of parts.slice(1)) {
       rule = rule.properties[part];
+      if (rule == null) break;
       if (rule.type === "any") break;
     }
 

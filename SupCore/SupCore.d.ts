@@ -1,4 +1,3 @@
-/// <reference path="../typings/tsd.d.ts" />
 /// <reference path="./ProjectServer.d.ts" />
 
 declare namespace SupCore {
@@ -64,6 +63,7 @@ declare namespace SupCore {
       type?: string;
       badges?: BadgeItem[];
       dependentAssetIds?: any[];
+      revisions?: { id: string; name: string}[];
     }
     class Entries extends Base.TreeById {
       pub: EntryNode[];
@@ -72,15 +72,18 @@ declare namespace SupCore {
 
       badgesByEntryId: { [key: string]: Badges };
       dependenciesByAssetId: any;
+      revisionsByEntryId: { [ id: string ]: { [ revisionId: string]: string; } };
 
-      constructor(pub: EntryNode[], server?: ProjectServer);
+      constructor(pub: EntryNode[], nextEntryId: number, server?: ProjectServer);
       walk(callback: (node: EntryNode, parentNode?: EntryNode) => any): void;
       add(node: EntryNode, parentId: string, index: number, callback: (err: string, index?: number) => any): void;
       client_add(node: EntryNode, parentId: string, index: number): void;
       move(id: string, parentId: string, index: number, callback: (err: string, index?: number) => any): void;
       remove(id: string, callback: (err: string) => any): void;
       setProperty(id: string, key: string, value: any, callback: (err: string, value?: any) => any): void;
-      getForStorage(): EntryNode[];
+      save(id: string, revisionName: string, callback: (err: string, revisionId?: string) => void): void;
+      client_save(id: string, revisionId: string, revisionName: string): void;
+      getForStorage(ignoredEntryTypes?: string[]): EntryNode[];
       getStoragePathFromId(id: string): string;
     }
 
@@ -88,14 +91,14 @@ declare namespace SupCore {
       server: ProjectServer;
 
       constructor(server: ProjectServer);
-      // _load(id: string): void;
+      acquire(id: string, owner: SupCore.RemoteClient, callback: (err: Error, item: SupCore.Data.Base.Asset) => void): void;
     }
     class Resources extends Base.Dictionary {
       server: ProjectServer;
       resourceClassesById: ProjectServer;
 
       constructor(server: ProjectServer);
-      // _load(id: string): void;
+      acquire(id: string, owner: SupCore.RemoteClient, callback: (err: Error, item: SupCore.Data.Base.Resource) => void): void;
     }
 
     class Room extends Base.Hash {
@@ -105,11 +108,11 @@ declare namespace SupCore {
       load(roomPath: string): void;
       unload(): void;
       save(roomPath: string, callback: (err: Error) => any): void;
-      join(client: any, callback: (err: string, item?: any, index?: number) => any): void;
+      join(client: SupCore.RemoteClient, callback: (err: string, item?: any, index?: number) => any): void;
       client_join(item: any, index: number): void;
-      leave(client: any, callback: (err: string, username?: any) => any): void;
+      leave(client: SupCore.RemoteClient, callback: (err: string, username?: any) => any): void;
       client_leave(id: string): void;
-      server_appendMessage(client: any, text: string, callback: (err: string, entry?: any) => any): void;
+      server_appendMessage(client: SupCore.RemoteClient, text: string, callback: (err: string, entry?: any) => any): void;
       client_appendMessage(entry: any): void;
     }
     class Rooms extends Base.Dictionary {
@@ -224,6 +227,9 @@ declare namespace SupCore {
         releaseAll(id: string): void;
       }
 
+      type ErrorCallback = (err: string) => void;
+      type SetPropertyCallback = ErrorCallback & ((err: string, ack: any, path: string, value: number|string|boolean) => void);
+
       class Asset extends Hash {
         id: string;
         server: ProjectServer;
@@ -241,6 +247,9 @@ declare namespace SupCore {
         // Also if the asset depends on others, this.emit("addDependencies", ...) with a list of entry IDs
         restore(): void;
 
+        // OVERRIDE: Called when a client unsubscribed from the asset
+        onClientUnsubscribed(clientId: string): void;
+
         // OVERRIDE: Called when destroying an asset
         // Most assets won't need to do anything here but some might want to do some
         // clean up work like making changes to associated resources
@@ -255,9 +264,8 @@ declare namespace SupCore {
         client_unload(): void;
 
         save(assetPath: string, callback: (err: Error) => any): void;
-        publish(buildPath: string, callback: (err: Error) => any): void;
 
-        server_setProperty(client: RemoteClient, path: string, value: any, callback: (err: string, path?: string, value?: any) => any): void;
+        server_setProperty(client: RemoteClient, path: string, value: number|string|boolean, callback: SetPropertyCallback): void;
       }
 
       class Resource extends Hash {
@@ -281,15 +289,15 @@ declare namespace SupCore {
         migrate(resourcePath: string, pub: any, callback: (hasMigrated: boolean) => void): void;
 
         save(resourcePath: string, callback: (err: Error) => any): void;
-        publish(buildPath: string, callback: (err: Error) => any): void;
 
-        server_setProperty(client: RemoteClient, path: string, value: number|string|boolean, callback: (err: string, path?: string, value?: any) => any): void;
+        server_setProperty(client: RemoteClient, path: string, value: number|string|boolean, callback: SetPropertyCallback): void;
       }
     }
   }
 
   interface RemoteClient {
     id: string;
+    socket: SocketIO.Socket;
   }
 
   interface PluginsInfo {
@@ -298,7 +306,6 @@ declare namespace SupCore {
       editors: { [assetType: string]: string; };
       tools: { [name: string]: string; };
     };
-    publishedBundles: string[];
   }
 
   interface SystemsInfo {
@@ -318,6 +325,8 @@ declare namespace SupCore {
     id: string;
     folderName: string;
     data: SystemData;
+    pluginsInfo: PluginsInfo;
+    serverBuild: (server: ProjectServer, buildPath: string, callback: (err: string) => void) => void;
 
     constructor(id: string, folderName: string);
     requireForAllPlugins(filePath: string): void;
@@ -332,15 +341,18 @@ declare namespace SupCore {
   export let system: System;
 
   class EventEmitter implements NodeJS.EventEmitter {
-    addListener(event: string, listener: Function): EventEmitter;
-    on(event: string, listener: Function): EventEmitter;
-    once(event: string, listener: Function): EventEmitter;
-    removeListener(event: string, listener: Function): EventEmitter;
-    removeAllListeners(event?: string): EventEmitter;
-    setMaxListeners(n: number): EventEmitter;
+    addListener(event: string, listener: Function): this;
+    on(event: string, listener: Function): this;
+    once(event: string, listener: Function): this;
+    removeListener(event: string, listener: Function): this;
+    removeAllListeners(event?: string): this;
+    setMaxListeners(n: number): this;
     getMaxListeners(): number;
     listeners(event: string): Function[];
     emit(event: string, ...args: any[]): boolean;
     listenerCount(type: string): number;
+    prependListener(event: string | symbol, listener: Function): this;
+    prependOnceListener(event: string | symbol, listener: Function): this;
+    eventNames(): (string | symbol)[];
   }
 }

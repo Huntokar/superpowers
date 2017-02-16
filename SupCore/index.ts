@@ -1,9 +1,12 @@
-/// <reference path="../typings/tsd.d.ts" />
-
-/* tslint:disable:no-unused-variable */
 import * as Data from "./Data";
-/* tslint:enable:no-unused-variable */
+
 export { Data };
+
+export let systemsPath: string;
+
+export function setSystemsPath(path: string) {
+  systemsPath = path;
+}
 
 export * from "./systems";
 

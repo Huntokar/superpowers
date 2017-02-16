@@ -2,7 +2,6 @@ import * as fs from "fs";
 import * as path from "path";
 import * as async from "async";
 
-import authMiddleware from "./authenticate";
 import ProjectServer from "./ProjectServer";
 import RemoteHubClient from "./RemoteHubClient";
 
@@ -25,7 +24,7 @@ export default class ProjectHub {
     this.projectsPath = path.join(dataPath, "projects");
     this.buildsPath = path.join(dataPath, "builds");
 
-    const serveProjects = (callback: ErrorCallback) => {
+    const serveProjects = (callback: ErrorCallback<NodeJS.ErrnoException>) => {
       async.eachSeries(fs.readdirSync(this.projectsPath), (folderName: string, cb: (err: Error) => any) => {
         if (folderName.indexOf(".") !== -1) { cb(null); return; }
         this.loadingProjectFolderName = folderName;
@@ -48,7 +47,6 @@ export default class ProjectHub {
 
     const serve = (callback: Function) => {
       this.io = this.globalIO.of("/hub");
-      this.io.use(authMiddleware);
 
       this.io.on("connection", this.onAddSocket);
       callback();

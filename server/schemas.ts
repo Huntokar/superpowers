@@ -4,11 +4,11 @@ import * as tv4 from "tv4";
 const config = {
   type: "object",
   properties: {
-    // Deprecated, use mainPort instead
-    port: { type: "number" },
+    serverName: { type: "string" },
     mainPort: { type: "number" },
     buildPort: { type: "number" },
     password: { type: "string" },
+    sessionSecret: { type: "string" },
     maxRecentBuilds: { type: "number", min: 1 }
   }
 };
@@ -45,8 +45,16 @@ const projectEntry = {
 
 const projectEntries = {
   definitions: { projectEntry },
-  type: "array",
-  items: { $ref: "#/definitions/projectEntry" }
+  type: "object",
+  properties: {
+    // IDs used to be integers but are now serialized as strings
+    id: { type: "integer" },
+    nodes: {
+      type: "array",
+      items: { $ref: "#/definitions/projectEntry" }
+    }
+  },
+  required: [ "nextEntryId", "nodes" ]
 };
 
 const schemas: { [name: string]: any } = { config, projectManifest, projectEntries };

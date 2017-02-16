@@ -34,7 +34,12 @@ export default class ListById extends EventEmitter {
   add(item: any, index: number, callback: (err: string, index?: number) => any) {
     if (item.id != null && this.schema["id"] == null) { callback("Found unexpected id key"); return; }
 
-    const missingKeys = Object.keys(this.schema);
+    const missingKeys: string[] = [];
+    for (const key of Object.keys(this.schema)) {
+      const rule = this.schema[key];
+      if (rule.type[rule.type.length - 1] !== "?") missingKeys.push(key);
+    }
+
     for (const key in item) {
       const value = item[key];
       const rule = this.schema[key];
@@ -111,8 +116,6 @@ export default class ListById extends EventEmitter {
     delete this.byId[id];
   }
 
-  // clear: ->
-
   setProperty(id: string, path: string, value: number|string|boolean, callback: (err: string, value?: any) => any) {
     let item = this.byId[id];
     if (item == null) { callback(`Invalid item id: ${id}`); return; }
@@ -122,6 +125,7 @@ export default class ListById extends EventEmitter {
     let rule = this.schema[parts[0]];
     for (const part of parts.slice(1)) {
       rule = rule.properties[part];
+      if (rule == null) break;
       if (rule.type === "any") break;
     }
 

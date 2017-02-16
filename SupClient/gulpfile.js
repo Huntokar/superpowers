@@ -13,7 +13,7 @@ gulp.task("typescript", function() {
     .pipe(tslint())
     .pipe(tslint.report("prose", { emitError: true }))
     .on("error", (err) => { throw err; })
-    .pipe(ts(tsProject))
+    .pipe(tsProject())
     .on("error", () => { failed = true; })
     .on("end", () => { if (failed) throw new Error("There were TypeScript errors."); });
   return tsResult.js.pipe(gulp.dest("./"));
@@ -22,14 +22,14 @@ gulp.task("typescript", function() {
 // Stylus
 const stylus = require("gulp-stylus");
 gulp.task("stylus", function() {
-  return gulp.src("./src/styles/*.styl").pipe(stylus({ errors: true, compress: true })).pipe(gulp.dest("../public/styles"));
+  return gulp.src("./styles/*.styl").pipe(stylus({ errors: true, compress: true })).pipe(gulp.dest("../public/styles"));
 });
 
 // Browserify
 const browserify = require("browserify");
 const source = require("vinyl-source-stream");
 gulp.task("browserify", [ "typescript" ], () =>
-  browserify("./src/index.js", { standalone: "SupClient" })
+  browserify("./index.js", { standalone: "SupClient" })
     .transform("brfs").bundle()
     .pipe(source("SupClient.js"))
     .pipe(gulp.dest("../public"))

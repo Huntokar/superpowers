@@ -2,7 +2,6 @@ import * as fs from "fs";
 import * as path from "path";
 import * as async from "async";
 
-import authMiddleware from "./authenticate";
 import RemoteProjectClient from "./RemoteProjectClient";
 import * as schemas from "./schemas";
 import migrateProject from "./migrateProject";
@@ -50,7 +49,7 @@ export default class ProjectServer {
 
         this.system = SupCore.systems[this.data.manifest.pub.systemId];
         if (this.system == null) {
-          callback(new Error(`The system ${this.data.manifest.pub.systemId} is not installed.`));
+          callback(new Error(`The system ${this.data.manifest.pub.systemId} is not installed. Run "node server install ${this.data.manifest.pub.systemId}" to install it.`));
         } else {
           this.buildsPath = path.join(buildsPath, this.data.manifest.pub.id);
           callback(null);
@@ -109,13 +108,31 @@ export default class ProjectServer {
         try { entriesData = JSON.parse(entriesJSON); }
         catch (err) { callback(err); return; }
 
+        if (this.data.manifest.migratedFromFormatVersion != null && this.data.manifest.migratedFromFormatVersion <= 5) {
+          let nextEntryId = 0;
+          let walk = (node: SupCore.Data.EntryNode) => {
+            const intNodeId = parseInt(node.id, 10);
+            nextEntryId = Math.max(nextEntryId, intNodeId);
+
+            if (node.type == null) for (const childNode of node.children) walk(childNode);
+          };
+          for (const node of entriesData) walk(node);
+          nextEntryId++;
+
+          entriesData = { nextEntryId, nodes: entriesData };
+        }
+
         try { schemas.validate(entriesData, "projectEntries"); }
         catch (err) { callback(err); return; }
 
-        this.data.entries = new SupCore.Data.Entries(entriesData, this);
+        this.data.entries = new SupCore.Data.Entries(entriesData.nodes, entriesData.nextEntryId, this);
         this.data.entries.on("change", this.onEntriesChanged);
 
-        callback(null);
+        if (this.data.manifest.migratedFromFormatVersion != null && this.data.manifest.migratedFromFormatVersion <= 5) {
+          this.saveEntries(callback);
+        } else {
+          callback(null);
+        }
       });
     };
 
@@ -128,7 +145,6 @@ export default class ProjectServer {
     const serve = (callback: (err: Error) => any) => {
       // Setup the project's namespace
       this.io = globalIO.of(`/project:${this.data.manifest.pub.id}`);
-      this.io.use(authMiddleware);
       this.io.on("connection", this.onAddSocket);
       callback(null);
     };
@@ -192,29 +208,18 @@ export default class ProjectServer {
 
   moveAssetFolderToTrash(trashedAssetFolder: string, callback: (err: Error) => any) {
     const assetsPath = path.join(this.projectPath, "assets");
+    const folderPath = path.join(assetsPath, trashedAssetFolder);
+    if (!fs.existsSync(folderPath)) { callback(null); return; }
+
     const trashedAssetsPath = path.join(this.projectPath, "trashedAssets");
 
     fs.mkdir(trashedAssetsPath, (err) => {
       if (err != null && err.code !== "EEXIST") throw err;
 
-      const folderPath = path.join(assetsPath, trashedAssetFolder);
-      let folderNumber = 0;
-
-      let renameSuccessful = false;
-      async.until(() => renameSuccessful, (cb) => {
-        const index = trashedAssetFolder.lastIndexOf("/");
-        if (index !== -1) trashedAssetFolder = trashedAssetFolder.slice(index);
-        let newFolderPath = path.join(trashedAssetsPath, trashedAssetFolder);
-
-        if (folderNumber > 0) newFolderPath = `${newFolderPath} (${folderNumber})`;
-        fs.rename(folderPath, newFolderPath, (err) => {
-          if (err != null) folderNumber++;
-          else renameSuccessful = true;
-
-          if (folderNumber > 1000) callback(new Error(`Couldn't trash asset: ${trashedAssetFolder}`));
-          else cb();
-        });
-      }, callback);
+      const index = trashedAssetFolder.lastIndexOf("/");
+      if (index !== -1) trashedAssetFolder = trashedAssetFolder.slice(index);
+      const newFolderPath = path.join(trashedAssetsPath, trashedAssetFolder);
+      fs.rename(folderPath, newFolderPath, callback);
     });
   }
 
@@ -246,6 +251,7 @@ export default class ProjectServer {
 
   private onAssetLoaded = (assetId: string, item: SupCore.Data.Base.Asset) => {
     item.on("change", () => { this.scheduleAssetSave(assetId); });
+    item.on("edit", (commandName: string, ...args: any[]) => { this.io.in(`sub:assets:${assetId}`).emit("edit:assets", assetId, commandName, ...args); });
 
     item.on("setBadge", (badgeId: string, type: string, data: any) => { this.setBadge(assetId, badgeId, type, data); });
     item.on("clearBadge", (badgeId: string) => { this.clearBadge(assetId, badgeId); });
@@ -264,13 +270,10 @@ export default class ProjectServer {
     const resourcePath = path.join(this.projectPath, `resources/${resourceId}`);
     const saveCallback = item.save.bind(item, resourcePath);
     item.on("change", () => { this.scheduleSave(saveDelay, `resources:${resourceId}`, saveCallback); });
+    item.on("edit", (commandName: string, ...args: any[]) => { this.io.in(`sub:resources:${resourceId}`).emit("edit:resources", resourceId, commandName, ...args); });
 
     item.on("setAssetBadge", (assetId: string, badgeId: string, type: string, data: any) => { this.setBadge(assetId, badgeId, type, data); });
     item.on("clearAssetBadge", (assetId: string, badgeId: string) => { this.clearBadge(assetId, badgeId); });
-
-    item.on("command", (cmd: string, ...callbackArgs: any[]) => {
-      this.io.in(`sub:resources:${resourceId}`).emit("edit:resources", resourceId, cmd, ...callbackArgs);
-    });
   };
 
   private onAddSocket = (socket: SocketIO.Socket) => {
@@ -317,7 +320,7 @@ export default class ProjectServer {
   };
 
   private saveEntries = (callback: (err: Error) => any) => {
-    const entriesJSON = JSON.stringify(this.data.entries.getForStorage(), null, 2);
+    const entriesJSON = JSON.stringify({ nextEntryId: this.data.entries.nextId, nodes: this.data.entries.getForStorage() }, null, 2);
     fs.writeFile(path.join(this.projectPath, "newEntries.json"), entriesJSON, () => {
       fs.rename(path.join(this.projectPath, "newEntries.json"), path.join(this.projectPath, "entries.json"), callback);
     });

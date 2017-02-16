@@ -2,6 +2,7 @@ import * as async from "async";
 import * as fs from "fs";
 import * as path from "path";
 
+import { server as serverConfig } from "./config";
 import ProjectHub from "./ProjectHub";
 import BaseRemoteClient from "./BaseRemoteClient";
 
@@ -17,6 +18,8 @@ interface AddProjectCallback { (err: string, projectId?: string): any; };
 export default class RemoteHubClient extends BaseRemoteClient {
   constructor(public server: ProjectHub, socket: SocketIO.Socket) {
     super(server, socket);
+
+    this.socket.emit("hubWelcome", { serverName: serverConfig.serverName });
 
     // Projects
     this.socket.on("add:projects", this.onAddProject);
@@ -99,7 +102,7 @@ export default class RemoteHubClient extends BaseRemoteClient {
         };
 
         const writeEntries = (callback: (err?: NodeJS.ErrnoException) => any) => {
-          const entriesJSON = JSON.stringify([], null, 2);
+          const entriesJSON = JSON.stringify({ nextEntryId: 0, nodes: [] }, null, 2);
           fs.writeFile(path.join(projectPath, "entries.json"), entriesJSON, { encoding: "utf8" }, callback);
         };
 
@@ -182,7 +185,7 @@ export default class RemoteHubClient extends BaseRemoteClient {
         });
       }
 
-    ], (err) => {
+    ], (err: Error) => {
       if (err != null) callback(err.message);
       else callback(null);
     });

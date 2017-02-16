@@ -3,14 +3,23 @@ import * as fs from "fs";
 import * as path from "path";
 
 export default class Assets extends SupData.Base.Dictionary {
+
+  byId: { [id: string]: SupCore.Data.Base.Asset };
+
   constructor(public server: ProjectServer) {
     super();
   }
 
-  acquire(id: string, owner: any, callback: (err: Error, item: any) => any) {
+  acquire(id: string, owner: SupCore.RemoteClient, callback: (err: Error, item: SupCore.Data.Base.Asset) => void) {
     if (this.server.data.entries.byId[id] == null || this.server.data.entries.byId[id].type == null) { callback(new Error(`Invalid asset id: ${id}`), null); return; }
 
     super.acquire(id, owner, callback);
+  }
+
+  release(id: string, owner: SupCore.RemoteClient, options?: { skipUnloadDelay: boolean }) {
+    if (owner != null) this.byId[id].onClientUnsubscribed(owner.id);
+
+    super.release(id, owner, options);
   }
 
   _load(id: string) {
